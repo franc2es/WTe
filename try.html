@@ -77,9 +77,69 @@
     <!-- Result Display -->
     <div id="result" class="result"></div>
 
+    <script src="https://cdn.jsdelivr.net/npm/web3@1.5.2/dist/web3.min.js"></script>
     <script type="module">
         let WALLET_ADDRESS = null;
-        let sdk = null; // Initialize your SDK here
+        let sdk = null;
+        let web3;
+        let nftSwapContract;
+
+        // NFTSwap合约ABI (只包含我们需要的函数)
+        const NFT_SWAP_ABI = [
+            {
+                "inputs": [
+                    {"internalType": "address", "name": "nftContract", "type": "address"},
+                    {"internalType": "uint256", "name": "tokenId", "type": "uint256"},
+                    {"internalType": "uint256", "name": "price", "type": "uint256"}
+                ],
+                "name": "startTime",
+                "outputs": [],
+                "stateMutability": "nonpayable",
+                "type": "function"
+            },
+            {
+                "anonymous": false,
+                "inputs": [
+                    {"indexed": false, "internalType": "address", "name": "nftContract", "type": "address"},
+                    {"indexed": false, "internalType": "uint256", "name": "tokenId", "type": "uint256"},
+                    {"indexed": false, "internalType": "uint256", "name": "listingAmount", "type": "uint256"}
+                ],
+                "name": "ComeToList",
+                "type": "event"
+            }
+        ];
+
+        // NFTSwap合约地址 - 替换为你的实际合约地址
+        const NFT_SWAP_ADDRESS = "0x时间锁合约地址";
+
+        // 初始化Web3和合约
+        const initWeb3 = async () => {
+            if (window.ethereum) {
+                web3 = new Web3(window.ethereum);
+                nftSwapContract = new web3.eth.Contract(NFT_SWAP_ABI, NFT_SWAP_ADDRESS);
+            }
+        };
+
+        // 监听ComeToList事件
+        const listenToEvents = () => {
+            nftSwapContract.events.ComeToList({})
+                .on('data', async (event) => {
+                    const { nftContract, tokenId } = event.returnValues;
+                    
+                    // 自动调用createListing
+                    try {
+                        await createListing(
+                            nftContract,
+                            tokenId,
+                            web3.utils.fromWei(listingAmount, 'ether')
+                        );
+                        updateResult(`NFT automatically listed after time lock period!`, true);
+                    } catch (error) {
+                        updateResult(`Error auto-listing NFT: ${error.message}`, false);
+                    }
+                })
+                .on('error', console.error);
+        };
 
         // Connect Wallet
         const connectWallet = async () => {
@@ -88,6 +148,8 @@
                     const accounts = await window.ethereum.request({ method: 'eth_requestAccounts' });
                     WALLET_ADDRESS = accounts[0];
                     document.getElementById("account").textContent = `Account: ${WALLET_ADDRESS}`;
+                    await initWeb3();
+                    await listenToEvents(); // 添加事件监听
                 } catch (error) {
                     console.error("Error connecting to wallet:", error);
                 }
@@ -119,6 +181,20 @@
             try {
                 const response = await sdk.createOffer(offer);
                 updateResult(`Successfully created an offer! Order Hash: ${response.orderHash}`, true);
+                
+                // 调用合约的startTime函数
+                try {
+                    await nftSwapContract.methods.startTime(
+                        tokenAddress,
+                        tokenId,
+                        web3.utils.toWei(offerAmount, 'ether')
+                    ).send({
+                        from: WALLET_ADDRESS
+                    });
+                    updateResult(`Successfully started timer for NFT!`, true);
+                } catch (error) {
+                    updateResult(`Error starting timer: ${error.message}`, false);
+                }
             } catch (error) {
                 updateResult(`Error in createOffer: ${error.message}`, false);
             }
